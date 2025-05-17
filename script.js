@@ -180,40 +180,34 @@ async function initScene() {
 
       window.addEventListener('scroll', function gravityScrollHandler() {
         const currentScrollY = window.scrollY;
-        const scrollDelta = currentScrollY - lastScrollY; // Positive for down, negative for up
+        const scrollDelta = currentScrollY - lastScrollY;
         clearTimeout(scrollTimeout);
 
         if (scrollDelta > 0) { // Scrolling Down
-          currentScrollEffect = 'floating';
-          // console.log("Scrolling Down - Floating"); // Can be noisy
-
-          // Base float gravity (weaker, as push will be continuous)
-          engine.world.gravity.y = -0.1;
-
-          // Apply a continuous upward push proportional to scrollDelta, but capped
-          // Adjust multipliers as needed: scrollDelta * 0.0002 means 0.002 force for 10px scroll, capped at 0.005
-          const pushMagnitude = Math.min(scrollDelta * 0.0002, 0.005);
-          svgBodies.forEach(body => {
-            if (!body.isStatic) {
-              Matter.Body.applyForce(body, body.position, {
-                x: (Math.random() - 0.5) * 0.001 * body.mass, // Even tinier random horizontal
-                y: -pushMagnitude * body.mass
-              });
-            }
-          });
-          
-          // Further weaken float if scrolled very far down (absolute position)
-          if (currentScrollY > 700) {
-            engine.world.gravity.y = 0; // Neutral buoyancy if very far
-          } else if (currentScrollY > 400) { // This condition implies it's already -0.1 unless it was just set to 0
-            if(engine.world.gravity.y !== 0) engine.world.gravity.y = -0.05; // Very weak float
+          if (currentScrollEffect !== 'floating') {
+            console.log("Transition to: Floating with Initial Push");
+            // Apply a one-time directional push for floating
+            svgBodies.forEach(body => {
+              if (!body.isStatic) {
+                const pushForceY = -0.015 * body.mass; // Slightly stronger initial upward push
+                const pushForceX = (Math.random() - 0.5) * 0.005 * body.mass; // Slight random horizontal
+                Matter.Body.applyForce(body, body.position, { x: pushForceX, y: pushForceY });
+              }
+            });
+            currentScrollEffect = 'floating';
           }
-          // else it remains -0.1 from above if not meeting the >400 or >700 conditions
+          
+          // Adjust float strength based on absolute scroll position
+          if (currentScrollY > 500) {
+            engine.world.gravity.y = -0.1; // Weaker float
+          } else {
+            engine.world.gravity.y = -0.5; // Stronger float
+          }
 
         } else if (scrollDelta < 0) { // Scrolling Up
           if (currentScrollEffect !== 'fallingHard') {
             console.log("Transition to: Falling Hard with Spin");
-            engine.world.gravity.y = 4.5;  // Increased G-force for scroll up
+            engine.world.gravity.y = 4.5;  // Objects fall harder
             svgBodies.forEach(body => {
               if (!body.isStatic) {
                 const randomAngularVelocity = (Math.random() - 0.5) * 0.2;
@@ -222,8 +216,7 @@ async function initScene() {
             });
             currentScrollEffect = 'fallingHard';
           } else {
-            // Already falling hard, ensure gravity remains strong
-             engine.world.gravity.y = 4.5;
+             engine.world.gravity.y = 4.5; // Maintain strong gravity if already falling hard
           }
         }
         lastScrollY = currentScrollY;
@@ -234,7 +227,7 @@ async function initScene() {
           currentScrollEffect = null;
         }, scrollStopDelay);
       });
-      console.log("Scroll listener with continuous push on scroll-down, spin on scroll-up.");
+      console.log("Scroll listener with initial push on float, spin on G-fall.");
     }
 
     function startSimulation(firstScrollEventY) {
