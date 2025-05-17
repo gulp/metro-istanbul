@@ -175,21 +175,41 @@ async function initScene() {
       let scrollTimeout = null;
       let lastScrollY = window.scrollY;
       const scrollStopDelay = 150;
+      let currentScrollEffect = null; // null, 'floating', 'fallingHard'
 
       window.addEventListener('scroll', function gravityScrollHandler() {
         const currentScrollY = window.scrollY;
         clearTimeout(scrollTimeout);
+
         if (currentScrollY > lastScrollY) { // Scrolling Down
-          engine.world.gravity.y = -0.5; // Objects float
+          if (currentScrollEffect !== 'floating') {
+            console.log("Transition to: Floating");
+            engine.world.gravity.y = -0.5; // Objects float
+            currentScrollEffect = 'floating';
+            // No angular velocity change for floating
+          }
         } else if (currentScrollY < lastScrollY) { // Scrolling Up
-          engine.world.gravity.y = 3.5;  // Objects fall harder
+          if (currentScrollEffect !== 'fallingHard') {
+            console.log("Transition to: Falling Hard");
+            engine.world.gravity.y = 3.5;  // Objects fall harder
+            svgBodies.forEach(body => {
+              if (!body.isStatic) {
+                const randomAngularVelocity = (Math.random() - 0.5) * 0.2;
+                Matter.Body.setAngularVelocity(body, randomAngularVelocity);
+              }
+            });
+            currentScrollEffect = 'fallingHard';
+          }
         }
         lastScrollY = currentScrollY;
+
         scrollTimeout = setTimeout(() => {
-          engine.world.gravity.y = initialGravityY; 
+          console.log("Scroll Stop: Resetting gravity and effect");
+          engine.world.gravity.y = initialGravityY;
+          currentScrollEffect = null; // Reset effect state
         }, scrollStopDelay);
       });
-      console.log("Scroll listener with direct gravity changes attached.");
+      console.log("Scroll listener with G-force and angular velocity on scroll up (stateful).");
     }
 
     function startSimulation(firstScrollEventY) {
