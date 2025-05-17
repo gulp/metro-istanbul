@@ -14,6 +14,8 @@ let currentResizeHandler = null;
 let currentStartSimulationScrollHandler = null; 
 let currentDebugRenderHandler = null; 
 
+// Global coefficient variables REMOVED
+
 let engine = Engine.create(); 
 let render = Render.create({
     element: document.body, 
@@ -84,12 +86,32 @@ async function initScene() {
   
   const DEFAULT_FRICTION_AIR = 0.01; 
   const DRAG_FRICTION_AIR = 0.2;
+  const ARROW_FRICTION_AIR = 0.0005; 
+  const M_FRICTION_AIR = 0.08;      
+  // const ARC_T_FRICTION_AIR = 0.15; // REMOVED
 
   Matter.Events.on(mouseConstraint, 'startdrag', function(event) { 
-    const draggedBody = event.body; if (draggedBody) { draggedBody._originalFrictionAir = draggedBody.frictionAir; draggedBody.frictionAir = DRAG_FRICTION_AIR; }
+    const draggedBody = event.body; 
+    if (draggedBody) { 
+        draggedBody._originalFrictionAir = draggedBody.frictionAir; 
+        draggedBody.frictionAir = DRAG_FRICTION_AIR; 
+    }
   });
   Matter.Events.on(mouseConstraint, 'enddrag', function(event) { 
-    const draggedBody = event.body; if (draggedBody) { draggedBody.frictionAir = typeof draggedBody._originalFrictionAir === 'number' ? draggedBody._originalFrictionAir : DEFAULT_FRICTION_AIR; delete draggedBody._originalFrictionAir; }
+    const draggedBody = event.body; 
+    if (draggedBody) { 
+        let restoreFrictionAir = DEFAULT_FRICTION_AIR; 
+        if (typeof draggedBody._originalFrictionAir === 'number') {
+            restoreFrictionAir = draggedBody._originalFrictionAir;
+        } else if (draggedBody.isArrow) { 
+            restoreFrictionAir = ARROW_FRICTION_AIR;
+        } else if (draggedBody.isM || draggedBody.isArcT) { // arc-t now uses M's friction if original not stored
+            restoreFrictionAir = M_FRICTION_AIR;
+        }
+        // Removed isArcT specific case, it will use M_FRICTION_AIR or DEFAULT if _originalFrictionAir is missing
+        draggedBody.frictionAir = restoreFrictionAir;
+        delete draggedBody._originalFrictionAir; 
+    }
   });
 
   render.canvas.addEventListener('wheel', function(event) { if (!mouseConstraint.body) { window.scrollBy(event.deltaX, event.deltaY); }}, { passive: false }); 
@@ -129,20 +151,7 @@ async function initScene() {
 
     const overallWorldOffsetX = clientWidth - overallScaledViewBoxWidth - (svgMetadata.viewBoxX * overallScale);
     const overallWorldOffsetY = clientHeight - overallScaledViewBoxHeight - (svgMetadata.viewBoxY * overallScale);
-
-    // Debug bounding box commented out
-    // currentDebugRenderHandler = function debugBoundingBox() { 
-    //   const context = render.context;
-    //   context.beginPath();
-    //   const debugRectX = (svgMetadata.viewBoxX * overallScale) + overallWorldOffsetX; 
-    //   const debugRectY = (svgMetadata.viewBoxY * overallScale) + overallWorldOffsetY;
-    //   context.rect(debugRectX, debugRectY, overallScaledViewBoxWidth, overallScaledViewBoxHeight);
-    //   context.strokeStyle = 'rgba(0, 255, 0, 0.5)'; 
-    //   context.lineWidth = 2;
-    //   context.stroke();
-    // };
-    // Matter.Events.on(render, 'afterRender', currentDebugRenderHandler);
-
+    
     const paths = svgDoc.querySelectorAll('path');
     const svgBodies = []; 
     
@@ -160,13 +169,37 @@ async function initScene() {
       const bodyStrokeStyle = pathElement.getAttribute('stroke') || bodyFillStyle; 
       const bodyLineWidth = parseFloat(pathElement.getAttribute('stroke-width')) || 0.5; 
 
+      let bodyDensity;
+      let bodyFrictionAir = DEFAULT_FRICTION_AIR;
+      let isThisBodyArrow = false;
+      let isThisBodyM = false; 
+      let isThisBodyArcT = false; // Keep for flagging, but physics will match M
+
+      if (pathElement.id === 'arrow') {
+        bodyDensity = 0.02; 
+        bodyFrictionAir = ARROW_FRICTION_AIR; 
+        isThisBodyArrow = true;
+      } else if (pathElement.id === 'M' || pathElement.id === 'arc-t') { // arc-t now gets same as M
+        bodyDensity = 0.0006; 
+        bodyFrictionAir = M_FRICTION_AIR; 
+        if (pathElement.id === 'M') isThisBodyM = true;
+        if (pathElement.id === 'arc-t') isThisBodyArcT = true; // Still flag it for potential future use or specific enddrag
+      } else { 
+        bodyDensity = 0.003; 
+      }
+
       const body = Bodies.fromVertices( worldBodyX, worldBodyY, [finalScaledVertices], {
-          isStatic: false, restitution: 0.02, friction: 0.3, density: 0.003, 
-          frictionAir: DEFAULT_FRICTION_AIR, 
+          isStatic: false, restitution: 0.02, friction: 0.3, 
+          density: bodyDensity, 
+          frictionAir: bodyFrictionAir, 
           render: { fillStyle: bodyFillStyle, strokeStyle: bodyStrokeStyle, lineWidth: bodyLineWidth, wireframes: false }
         }, true );
 
       if (body) {
+        if (isThisBodyArrow) body.isArrow = true;
+        if (isThisBodyM) body.isM = true;
+        if (isThisBodyArcT) body.isArcT = true; // Keep flag
+
         if (body.parts && body.parts.length > 1) {
             for (let i = 0; i < body.parts.length; i++) { 
                 body.parts[i].render.fillStyle = bodyFillStyle; 
@@ -196,7 +229,11 @@ async function initScene() {
             const currentScrollY = window.scrollY; const scrollDelta = currentScrollY - lastScrollY; clearTimeout(scrollTimeout);
             if (scrollDelta > 0) { 
                 if (currentScrollEffect !== 'floating') { console.log("Transition to: Floating with Initial Push");
-                    svgBodies.forEach(body => { if (!body.isStatic) { const pushForceY = -0.015 * body.mass; const pushForceX = (Math.random() - 0.5) * 0.005 * body.mass; Matter.Body.applyForce(body, body.position, { x: pushForceX, y: pushForceY }); }});
+                    svgBodies.forEach(body => { if (!body.isStatic) { 
+                        const pushY = -0.015 * body.mass; // Reverted to hardcoded default
+                        const pushX = (Math.random() - 0.5) * 0.005 * body.mass; // Reverted to hardcoded default
+                        Matter.Body.applyForce(body, body.position, { x: pushX, y: pushY }); 
+                    }});
                     currentScrollEffect = 'floating'; }
                 if (currentScrollY > 500) { engine.world.gravity.y = -0.1; } else { engine.world.gravity.y = -0.5; }
             } else if (scrollDelta < 0) { 
@@ -233,4 +270,5 @@ async function initScene() {
   } catch (error) { console.error('Error initializing scene:', error); isProgrammaticScroll = false; }
 }
 
+// Removed slider setup from DOMContentLoaded
 document.addEventListener('DOMContentLoaded', initScene);
