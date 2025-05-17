@@ -66,17 +66,56 @@ async function initScene() {
     const svgText = await response.text();
     const parser = new DOMParser();
     const svgDoc = parser.parseFromString(svgText, 'image/svg+xml');
+    const svgElement = svgDoc.documentElement;
+
+    // SVG viewBox dimensions
+    const viewBox = svgElement.getAttribute('viewBox').split(' ').map(Number);
+    const svgViewBoxX = viewBox[0];
+    const svgViewBoxY = viewBox[1];
+    const svgViewBoxWidth = viewBox[2];
+    const svgViewBoxHeight = viewBox[3];
+
+    // Calculate scale factor and offsets to center SVG in window
+    const padding = 0.1; // 10% padding around the SVG content
+    const scaleX = (window.innerWidth * (1 - 2 * padding)) / svgViewBoxWidth;
+    const scaleY = (window.innerHeight * (1 - 2 * padding)) / svgViewBoxHeight;
+    const scale = Math.min(scaleX, scaleY);
+
+    const scaledSvgWidth = svgViewBoxWidth * scale;
+    const scaledSvgHeight = svgViewBoxHeight * scale;
+
+    const worldOffsetX = (window.innerWidth - scaledSvgWidth) / 2 - (svgViewBoxX * scale);
+    const worldOffsetY = (window.innerHeight - scaledSvgHeight) / 2 - (svgViewBoxY * scale);
     
     // Extract all path elements
     const paths = svgDoc.querySelectorAll('path');
     
     // Create Matter bodies from SVG paths
     paths.forEach((path, index) => {
-      const vertices = Svg.pathToVertices(path, 10); // Decreased sampleLength for more detail
+      const rawSvgVertices = Svg.pathToVertices(path, 10);
+
+      if (!rawSvgVertices || rawSvgVertices.length === 0) {
+        console.warn('Could not get vertices for path:', path.id);
+        return;
+      }
+
+      // Calculate centroid of original SVG vertices
+      const svgCentroid = Vertices.centre(rawSvgVertices);
+
+      // Translate vertices so their centroid is at (0,0)
+      const translatedVertices = Vertices.translate(rawSvgVertices, { x: -svgCentroid.x, y: -svgCentroid.y }, 1);
+      
+      // Scale these centered vertices
+      const scaledVertices = Vertices.scale(translatedVertices, scale, scale);
+
+      // Calculate world position for the body's CoM
+      const worldBodyX = (svgCentroid.x * scale) + worldOffsetX;
+      const worldBodyY = (svgCentroid.y * scale) + worldOffsetY;
+      
       const body = Bodies.fromVertices(
-        window.innerWidth / 2 + (Math.random() - 0.5) * 50, // Slightly randomized X
-        window.innerHeight / 3 + (index * 10 - paths.length * 5), // Spread Y, start higher
-        vertices,
+        worldBodyX,
+        worldBodyY,
+        [scaledVertices], // fromVertices expects an array of vertex sets
         {
           isStatic: false, // Make them dynamic
           restitution: 0.2,
