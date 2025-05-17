@@ -1,205 +1,178 @@
+// Attempt to control scroll restoration
+if ('scrollRestoration' in history) {
+  history.scrollRestoration = 'manual';
+}
+
 // Matter.js setup
 const { Engine, Render, Runner, Bodies, Composite, Svg, Vertices, Mouse, MouseConstraint } = Matter;
-Matter.Common.setDecomp(decomp);
+Matter.Common.setDecomp(decomp); 
 
-let isProgrammaticScroll = false; // Flag to identify script-initiated scrolls
+let isProgrammaticScroll = false; 
+let runner = null; 
+let currentGravityScrollHandler = null; 
+let currentResizeHandler = null; 
+let currentStartSimulationScrollHandler = null; 
+let currentDebugRenderHandler = null; 
 
-// Initialize engine and renderer
-const engine = Engine.create();
-engine.world.gravity.y = 1; 
-const render = Render.create({
-  element: document.body,
-  engine: engine,
-  options: {
-    width: document.documentElement.clientWidth,
-    height: window.innerHeight,
-    wireframes: false,
-    background: 'transparent', 
-    showAngleIndicator: false
-  }
-});
+let engine = Engine.create(); 
+let render = Render.create({
+    element: document.body, 
+    engine: engine,         
+    options: { width: 800, height: 600 } 
+}); 
 
-// Style the canvas
-render.canvas.style.position = 'fixed';
-render.canvas.style.top = '0';
-render.canvas.style.left = '0';
-render.canvas.style.zIndex = '10'; // Keep on top for now, can be set to -1 later
-render.canvas.style.pointerEvents = 'auto'; // Enable mouse events on the canvas
-
-// Add mouse control
-const mouse = Mouse.create(render.canvas);
-const mouseConstraint = MouseConstraint.create(engine, {
-mouse: mouse,
-constraint: {
-  stiffness: 0.95, // Make dragging more rigid
-  render: {
-    visible: true, // Show constraint line while dragging
-    lineWidth: 2,
-    strokeStyle: 'rgba(0, 255, 0, 0.7)'
-  }
+function debounce(func, delay) {
+  let timeout;
+  return function(...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(this, args), delay);
+  };
 }
-});
-Composite.add(engine.world, mouseConstraint);
 
-// Matter.js default frictionAir is 0.01
-const DEFAULT_FRICTION_AIR = 0.01;
-const DRAG_FRICTION_AIR = 0.2; // High friction during drag
-
-Matter.Events.on(mouseConstraint, 'startdrag', function(event) {
-    const draggedBody = event.body;
-    if (draggedBody) {
-        // Store the original on the body itself, in case it wasn't the default
-        // though we will ensure all bodies start with DEFAULT_FRICTION_AIR
-        draggedBody._originalFrictionAir = draggedBody.frictionAir;
-        draggedBody.frictionAir = DRAG_FRICTION_AIR;
-        // console.log(`Start drag on body ${draggedBody.id}, frictionAir set to: ${draggedBody.frictionAir}`);
+function cleanupCurrentScene() {
+  console.log("Cleaning up current scene...");
+  if (runner) { Runner.stop(runner); runner = null; console.log("Runner stopped."); }
+  if (render && render.canvas) { 
+    if (currentDebugRenderHandler) {
+        Matter.Events.off(render, 'afterRender', currentDebugRenderHandler);
+        currentDebugRenderHandler = null;
+        console.log("Debug render listener removed.");
     }
-});
-
-Matter.Events.on(mouseConstraint, 'enddrag', function(event) {
-    const draggedBody = event.body;
-    if (draggedBody) {
-        // Restore to its stored original, or the default if somehow not stored
-        draggedBody.frictionAir = typeof draggedBody._originalFrictionAir === 'number'
-                                  ? draggedBody._originalFrictionAir
-                                  : DEFAULT_FRICTION_AIR;
-        delete draggedBody._originalFrictionAir; // Clean up the temporary property
-        // console.log(`End drag on body ${draggedBody.id}, frictionAir restored to: ${draggedBody.frictionAir}`);
-    }
-});
-
-// Allow page scrolling via mouse wheel even when mouse is over the canvas, if not dragging
-render.canvas.addEventListener('wheel', function(event) {
-  // If a body is being dragged by the mouse constraint, mouseConstraint.body will be set.
-  // If no body is being dragged, allow the default window scroll.
-  if (!mouseConstraint.body) {
-    // We don't want to preventDefault, let the browser handle it.
-    // However, sometimes the canvas itself captures it.
-    // A common workaround if default doesn't happen is to manually scroll.
-    // But let's first see if simply NOT stopping propagation or preventing default is enough.
-    // Matter.js's internal mouse wheel handler might call preventDefault.
-    // This is tricky. A simpler way for now:
-    // Let's assume Matter's default wheel listener is the issue.
-    // We can try to "override" by just letting this one pass.
-    // If Matter's listener is too aggressive, this won't be enough.
+    Render.stop(render); 
+    render.canvas.remove(); 
+    console.log("Render stopped and canvas removed."); 
   }
-  // A more forceful way if the above isn't enough:
-  if (!mouseConstraint.body) {
-     window.scrollBy(event.deltaX, event.deltaY);
-  }
-}, { passive: false }); // Try with non-passive first to see if we can prevent Matter's default
+  if (engine) { Composite.clear(engine.world, false); Engine.clear(engine); console.log("Engine cleared."); }
+  if (currentGravityScrollHandler) { window.removeEventListener('scroll', currentGravityScrollHandler); currentGravityScrollHandler = null; console.log("Gravity scroll listener removed."); }
+  if (currentStartSimulationScrollHandler) { window.removeEventListener('scroll', currentStartSimulationScrollHandler); currentStartSimulationScrollHandler = null; console.log("Start simulation scroll listener removed."); }
+}
 
-// Wall properties
 const wallThickness = 50;
-let walls = [];
 
-function createWalls() {
-  Composite.remove(engine.world, walls);
-  walls = [];
+function createWalls(currentEngine) { 
+  let sceneWalls = []; 
   const wallOptions = { isStatic: true, render: { fillStyle: '#666' } };
   const clientWidth = document.documentElement.clientWidth;
-
-  walls.push(Bodies.rectangle(clientWidth / 2, window.innerHeight + wallThickness / 2, clientWidth, wallThickness, wallOptions));
-  walls.push(Bodies.rectangle(clientWidth / 2, -wallThickness / 2 - 100, clientWidth, wallThickness, wallOptions));
-  walls.push(Bodies.rectangle(-wallThickness / 2, window.innerHeight / 2, wallThickness, window.innerHeight, wallOptions));
-  walls.push(Bodies.rectangle(clientWidth + wallThickness / 2, window.innerHeight / 2, wallThickness, window.innerHeight, wallOptions));
-  Composite.add(engine.world, walls);
+  const currentWindowHeight = window.innerHeight;
+  sceneWalls.push(Bodies.rectangle(clientWidth / 2, currentWindowHeight + wallThickness / 2, clientWidth, wallThickness, wallOptions));
+  sceneWalls.push(Bodies.rectangle(clientWidth / 2, -wallThickness / 2 - 100, clientWidth, wallThickness, wallOptions));
+  sceneWalls.push(Bodies.rectangle(-wallThickness / 2, currentWindowHeight / 2, wallThickness, currentWindowHeight, wallOptions));
+  sceneWalls.push(Bodies.rectangle(clientWidth + wallThickness / 2, currentWindowHeight / 2, wallThickness, currentWindowHeight, wallOptions));
+  Composite.add(currentEngine.world, sceneWalls);
 }
 
 async function initScene() {
-  try {
-    // Simplest form: Scroll to top, allow it to be smooth if CSS dictates.
-    // The isProgrammaticScroll flag will prevent this from starting the simulation.
-    isProgrammaticScroll = true;
-    window.scrollTo(0, 0);
-    setTimeout(() => {
-        isProgrammaticScroll = false;
-    }, 0); // Reset flag after event loop turn
+  console.log("initScene called");
+  cleanupCurrentScene(); 
 
-    createWalls();
+  engine = Engine.create(); 
+  engine.world.gravity.y = 1;
+
+  render = Render.create({ 
+    element: document.body, engine: engine,
+    options: { width: document.documentElement.clientWidth, height: window.innerHeight, wireframes: false, background: 'transparent', showAngleIndicator: false }
+  });
+
+  render.canvas.style.position = 'fixed'; render.canvas.style.top = '0'; render.canvas.style.left = '0';
+  render.canvas.style.zIndex = '10'; render.canvas.style.pointerEvents = 'auto'; 
+
+  const mouse = Mouse.create(render.canvas);
+  const mouseConstraint = MouseConstraint.create(engine, {
+    mouse: mouse, constraint: { stiffness: 0.95, render: { visible: true, lineWidth: 2, strokeStyle: 'rgba(0, 255, 0, 0.7)'}}
+  });
+  Composite.add(engine.world, mouseConstraint);
+  
+  const DEFAULT_FRICTION_AIR = 0.01; 
+  const DRAG_FRICTION_AIR = 0.2;
+
+  Matter.Events.on(mouseConstraint, 'startdrag', function(event) { 
+    const draggedBody = event.body; if (draggedBody) { draggedBody._originalFrictionAir = draggedBody.frictionAir; draggedBody.frictionAir = DRAG_FRICTION_AIR; }
+  });
+  Matter.Events.on(mouseConstraint, 'enddrag', function(event) { 
+    const draggedBody = event.body; if (draggedBody) { draggedBody.frictionAir = typeof draggedBody._originalFrictionAir === 'number' ? draggedBody._originalFrictionAir : DEFAULT_FRICTION_AIR; delete draggedBody._originalFrictionAir; }
+  });
+
+  render.canvas.addEventListener('wheel', function(event) { if (!mouseConstraint.body) { window.scrollBy(event.deltaX, event.deltaY); }}, { passive: false }); 
+
+  try {
+    isProgrammaticScroll = true; window.scrollTo(0, 0); setTimeout(() => { isProgrammaticScroll = false; }, 0); 
+    createWalls(engine); 
 
     const response = await fetch('images/istanbul-metro-logo.svg');
     if (!response.ok) throw new Error('Failed to load SVG');
     const svgText = await response.text();
-    const parser = new DOMParser();
-    const svgDoc = parser.parseFromString(svgText, 'image/svg+xml');
+    const parser = new DOMParser(); const svgDoc = parser.parseFromString(svgText, 'image/svg+xml');
     const svgElement = svgDoc.documentElement;
 
-    const viewBox = svgElement.getAttribute('viewBox').split(' ').map(Number);
-    const svgViewBoxX = viewBox[0]; 
-    const svgViewBoxY = viewBox[1]; 
-    const svgViewBoxWidth = viewBox[2];
-    const svgViewBoxHeight = viewBox[3];
+    const viewBoxAttribute = svgElement.getAttribute('viewBox');
+    const viewBoxParts = viewBoxAttribute ? viewBoxAttribute.split(' ').map(Number) : [0,0,100,100];
+    const svgMetadata = {
+        viewBoxX: viewBoxParts[0], viewBoxY: viewBoxParts[1], viewBoxWidth: viewBoxParts[2], viewBoxHeight: viewBoxParts[3],
+        paddingPercent: 0.2, 
+        baseScaleMultiplier: 0.5 
+    };
     
-    const paddingPercent = 0.2; 
-    let scale;
-    const availableWidth = document.documentElement.clientWidth * (1 - paddingPercent);
-    const availableHeight = window.innerHeight * (1 - paddingPercent);
+    const clientWidth = document.documentElement.clientWidth;
+    const clientHeight = window.innerHeight;
+    const availableWidthForScaling = clientWidth * (1 - svgMetadata.paddingPercent);
+    const availableHeightForScaling = clientHeight * (1 - svgMetadata.paddingPercent);
+    let overallScale;
+    if (svgMetadata.viewBoxWidth > 0 && svgMetadata.viewBoxHeight > 0) {
+        const scaleX = availableWidthForScaling / svgMetadata.viewBoxWidth;
+        const scaleY = availableHeightForScaling / svgMetadata.viewBoxHeight;
+        overallScale = Math.min(scaleX, scaleY);
+    } else { overallScale = 1; }
+    overallScale *= svgMetadata.baseScaleMultiplier;
+    
+    const overallScaledViewBoxWidth = svgMetadata.viewBoxWidth * overallScale;
+    const overallScaledViewBoxHeight = svgMetadata.viewBoxHeight * overallScale;
 
-    if (svgViewBoxWidth > 0 && svgViewBoxHeight > 0) {
-        const scaleX = availableWidth / svgViewBoxWidth;
-        const scaleY = availableHeight / svgViewBoxHeight;
-        scale = Math.min(scaleX, scaleY);
-    } else {
-        scale = 1; 
-    }
-    scale *= 0.5; 
+    const overallWorldOffsetX = clientWidth - overallScaledViewBoxWidth - (svgMetadata.viewBoxX * overallScale);
+    const overallWorldOffsetY = clientHeight - overallScaledViewBoxHeight - (svgMetadata.viewBoxY * overallScale);
 
-    const scaledViewBoxWidth = svgViewBoxWidth * scale;
-    const scaledViewBoxHeight = svgViewBoxHeight * scale;
-
-    const desiredPixelPadding = 0; 
-    const worldOffsetX = document.documentElement.clientWidth - scaledViewBoxWidth - desiredPixelPadding - (svgViewBoxX * scale);
-    const worldOffsetY = window.innerHeight - scaledViewBoxHeight - desiredPixelPadding - (svgViewBoxY * scale);
-
-    // Matter.Events.on(render, 'afterRender', (event) => {
+    // Debug bounding box commented out
+    // currentDebugRenderHandler = function debugBoundingBox() { 
     //   const context = render.context;
     //   context.beginPath();
-    //   const debugRectX = worldOffsetX + (svgViewBoxX * scale);
-    //   const debugRectY = worldOffsetY + (svgViewBoxY * scale);
-    //   context.rect(debugRectX, debugRectY, scaledViewBoxWidth, scaledViewBoxHeight);
-    //   context.strokeStyle = 'rgba(0, 255, 0, 0.5)';
+    //   const debugRectX = (svgMetadata.viewBoxX * overallScale) + overallWorldOffsetX; 
+    //   const debugRectY = (svgMetadata.viewBoxY * overallScale) + overallWorldOffsetY;
+    //   context.rect(debugRectX, debugRectY, overallScaledViewBoxWidth, overallScaledViewBoxHeight);
+    //   context.strokeStyle = 'rgba(0, 255, 0, 0.5)'; 
     //   context.lineWidth = 2;
     //   context.stroke();
-    // });
+    // };
+    // Matter.Events.on(render, 'afterRender', currentDebugRenderHandler);
 
     const paths = svgDoc.querySelectorAll('path');
-    const svgBodies = [];
+    const svgBodies = []; 
     
     paths.forEach((pathElement) => {
       const rawPathVertices = Svg.pathToVertices(pathElement, 10); 
       if (!rawPathVertices || rawPathVertices.length === 0) return;
-
       const svgPathCentroid = Vertices.centre(rawPathVertices);
       const translatedPathVertices = Vertices.translate(rawPathVertices, { x: -svgPathCentroid.x, y: -svgPathCentroid.y }, 1);
-      const scaledPathVertices = Vertices.scale(translatedPathVertices, scale, scale);
+            
+      const finalScaledVertices = Vertices.scale(translatedPathVertices, overallScale, overallScale); 
+      const worldBodyX = (svgPathCentroid.x * overallScale) + overallWorldOffsetX; 
+      const worldBodyY = (svgPathCentroid.y * overallScale) + overallWorldOffsetY; 
 
-      const worldBodyX = (svgPathCentroid.x * scale) + worldOffsetX;
-      const worldBodyY = (svgPathCentroid.y * scale) + worldOffsetY;
-      
-      const body = Bodies.fromVertices(
-        worldBodyX, worldBodyY, [scaledPathVertices], 
-        {
-          isStatic: false, // Dynamic during initial invisible settle
-          restitution: 0.02, // Significantly reduced bounciness
-          friction: 0.3,
-          density: 0.003, // Increased density for more inertia
-          frictionAir: DEFAULT_FRICTION_AIR, // Explicitly set default frictionAir
-          render: {
-            fillStyle: pathElement.getAttribute('fill') || '#2d4059',
-            strokeStyle: pathElement.getAttribute('stroke') || '#2d4059',
-            lineWidth: parseFloat(pathElement.getAttribute('stroke-width')) || 1,
-            wireframes: false 
-          }
-        },
-        true
-      );
+      const bodyFillStyle = pathElement.getAttribute('fill') || '#2d4059';
+      const bodyStrokeStyle = pathElement.getAttribute('stroke') || bodyFillStyle; 
+      const bodyLineWidth = parseFloat(pathElement.getAttribute('stroke-width')) || 0.5; 
+
+      const body = Bodies.fromVertices( worldBodyX, worldBodyY, [finalScaledVertices], {
+          isStatic: false, restitution: 0.02, friction: 0.3, density: 0.003, 
+          frictionAir: DEFAULT_FRICTION_AIR, 
+          render: { fillStyle: bodyFillStyle, strokeStyle: bodyStrokeStyle, lineWidth: bodyLineWidth, wireframes: false }
+        }, true );
+
       if (body) {
-        // Placeholder for tagging light object, e.g. if (pathElement.id === 'your-arc-id') body.isLight = true;
         if (body.parts && body.parts.length > 1) {
-          for (let i = 1; i < body.parts.length; i++) {
-            body.parts[i].render.strokeStyle = body.render.fillStyle;
-          }
+            for (let i = 0; i < body.parts.length; i++) { 
+                body.parts[i].render.fillStyle = bodyFillStyle; 
+                body.parts[i].render.strokeStyle = bodyFillStyle; 
+                body.parts[i].render.lineWidth = 0.5; 
+            }
         }
         Composite.add(engine.world, body);
         svgBodies.push(body); 
@@ -208,152 +181,56 @@ async function initScene() {
 
     const settleSteps = 15; 
     const settleDelta = (1000 / 60) / settleSteps;
-    for (let i = 0; i < settleSteps; i++) {
-      Engine.update(engine, settleDelta);
-    }
+    for (let i = 0; i < settleSteps; i++) { Engine.update(engine, settleDelta); }
     console.log("Initial dynamic settle complete.");
-
-    svgBodies.forEach(body => {
-      Matter.Body.setStatic(body, true);
-    });
-
+    svgBodies.forEach(body => { Matter.Body.setStatic(body, true); });
     Render.world(render); 
-    console.log("Scene initialized with pre-settled static objects. Simulation paused.");
+    console.log("Scene initialized. Simulation paused.");
 
-    let simulationStarted = false;
-    const initialPageScrollY = window.scrollY;
+    let simulationStarted = false; const initialPageScrollY = window.scrollY;
 
-    // function applyExplosiveForce(bodiesToExplode) { // DISABLED
-    //   const forceMagnitudeY = -0.02;
-    //   const forceMagnitudeX = 0.01;
-    //   bodiesToExplode.forEach(body => {
-    //     if (!body.isStatic) {
-    //       const randomX = (Math.random() - 0.5) * 2 * forceMagnitudeX;
-    //       const randomY = Math.random() * forceMagnitudeY;
-    //       Matter.Body.applyForce(body, body.position, {
-    //         x: randomX * body.mass,
-    //         y: randomY * body.mass
-    //       });
-    //     }
-    //   });
-    // }
-
-    function startMainScrollListener() {
-      const initialGravityY = engine.world.gravity.y;
-      let scrollTimeout = null;
-      let lastScrollY = window.scrollY;
-      const scrollStopDelay = 150;
-      let currentScrollEffect = null; // null, 'floating', 'fallingHard'
-      // const comingSoonFooter = document.getElementById('coming-soon-footer'); // REMOVED
-      // let footerShown = false; // REMOVED
-
-      window.addEventListener('scroll', function gravityScrollHandler() {
-        const currentScrollY = window.scrollY;
-        const scrollDelta = currentScrollY - lastScrollY;
-        clearTimeout(scrollTimeout);
-
-        // "COMING SOON" footer JavaScript logic REMOVED
-
-        if (scrollDelta > 0) { // Scrolling Down
-          if (currentScrollEffect !== 'floating') {
-            console.log("Transition to: Floating with Initial Push");
-            // Apply a one-time directional push for floating
-            svgBodies.forEach(body => {
-              if (!body.isStatic) {
-                const pushForceY = -0.015 * body.mass; // Slightly stronger initial upward push
-                const pushForceX = (Math.random() - 0.5) * 0.005 * body.mass; // Slight random horizontal
-                Matter.Body.applyForce(body, body.position, { x: pushForceX, y: pushForceY });
-              }
-            });
-            currentScrollEffect = 'floating';
-          }
-          
-          // Adjust float strength based on absolute scroll position
-          if (currentScrollY > 500) {
-            engine.world.gravity.y = -0.1; // Weaker float
-          } else {
-            engine.world.gravity.y = -0.5; // Stronger float
-          }
-
-        } else if (scrollDelta < 0) { // Scrolling Up
-          if (currentScrollEffect !== 'fallingHard') {
-            console.log("Transition to: Falling Hard with Spin");
-            engine.world.gravity.y = 4.5;  // Objects fall harder
-            svgBodies.forEach(body => {
-              if (!body.isStatic) {
-                const randomAngularVelocity = (Math.random() - 0.5) * 0.2;
-                Matter.Body.setAngularVelocity(body, randomAngularVelocity);
-              }
-            });
-            currentScrollEffect = 'fallingHard';
-          } else {
-             engine.world.gravity.y = 4.5; // Maintain strong gravity if already falling hard
-          }
-        }
-        lastScrollY = currentScrollY;
-
-        scrollTimeout = setTimeout(() => {
-          console.log("Scroll Stop: Resetting gravity and effect");
-          engine.world.gravity.y = initialGravityY;
-          currentScrollEffect = null;
-        }, scrollStopDelay);
-      });
-      console.log("Scroll listener with initial push on float, spin on G-fall.");
+    function startMainScrollListener() { 
+        const initialGravityY = engine.world.gravity.y; let scrollTimeout = null; let lastScrollY = window.scrollY;
+        const scrollStopDelay = 150; let currentScrollEffect = null; 
+        currentGravityScrollHandler = function gravityScrollHandler() {
+            const currentScrollY = window.scrollY; const scrollDelta = currentScrollY - lastScrollY; clearTimeout(scrollTimeout);
+            if (scrollDelta > 0) { 
+                if (currentScrollEffect !== 'floating') { console.log("Transition to: Floating with Initial Push");
+                    svgBodies.forEach(body => { if (!body.isStatic) { const pushForceY = -0.015 * body.mass; const pushForceX = (Math.random() - 0.5) * 0.005 * body.mass; Matter.Body.applyForce(body, body.position, { x: pushForceX, y: pushForceY }); }});
+                    currentScrollEffect = 'floating'; }
+                if (currentScrollY > 500) { engine.world.gravity.y = -0.1; } else { engine.world.gravity.y = -0.5; }
+            } else if (scrollDelta < 0) { 
+                if (currentScrollEffect !== 'fallingHard') { console.log("Transition to: Falling Hard with Spin"); engine.world.gravity.y = 4.5;  
+                    svgBodies.forEach(body => { if (!body.isStatic) { const randomAngularVelocity = (Math.random() - 0.5) * 0.2; Matter.Body.setAngularVelocity(body, randomAngularVelocity); }});
+                    currentScrollEffect = 'fallingHard';
+                } else { engine.world.gravity.y = 4.5; } }
+            lastScrollY = currentScrollY;
+            scrollTimeout = setTimeout(() => { console.log("Scroll Stop: Resetting gravity and effect"); engine.world.gravity.y = initialGravityY; currentScrollEffect = null; }, scrollStopDelay);
+        };
+        window.addEventListener('scroll', currentGravityScrollHandler); console.log("Main scroll listener added.");
     }
 
-    function startSimulation(firstScrollEventY) {
-      if (!simulationStarted) {
-        simulationStarted = true;
-        svgBodies.forEach(body => { Matter.Body.setStatic(body, false); });
-        
-        if (initialPageScrollY > 0 && firstScrollEventY < initialPageScrollY) {
-          console.log("Applying bump: page loaded scrolled, and first scroll was up.");
-          // const originalGravity = engine.world.gravity.y; // Not needed if not changing gravity for bump
-          // engine.world.gravity.y = 0; // Do NOT neutralize gravity for this bump
-
-          // Apply a very gentle, non-randomized upward nudge against normal gravity
-          svgBodies.forEach(body => {
-            if (!body.isStatic) {
-              Matter.Body.applyForce(body, body.position, { x: 0, y: -0.001 * body.mass });
-            }
-          });
-          // engine.world.gravity.y = originalGravity; // Gravity was not changed
-        }
-        
-        Render.run(render);
-        Runner.run(engine);
-        startMainScrollListener();
-        console.log("Matter.js simulation started on first scroll.");
-      }
+    function startSimulation(firstScrollEventY) { 
+        if (!simulationStarted) { simulationStarted = true;
+            svgBodies.forEach(body => { Matter.Body.setStatic(body, false); });
+            if (initialPageScrollY > 0 && firstScrollEventY < initialPageScrollY) { console.log("Applying bump...");
+                svgBodies.forEach(body => { if (!body.isStatic) { Matter.Body.applyForce(body, body.position, { x: 0, y: -0.001 * body.mass }); }}); }
+            Render.run(render); runner = Runner.run(engine); startMainScrollListener(); console.log("Matter.js simulation started."); }
     }
 
-    function startSimulationOnScroll() {
-      if (isProgrammaticScroll) {
-        // console.log("Programmatic scroll detected, ignoring for simulation start.");
-        // isProgrammaticScroll = false; // Reset here if not using timeout in initScene, but timeout is safer.
-        return;
-      }
-      // console.log("User scroll detected, starting simulation.");
-      startSimulation(window.scrollY);
-      window.removeEventListener('scroll', startSimulationOnScroll);
-    }
-    window.addEventListener('scroll', startSimulationOnScroll);
+    currentStartSimulationScrollHandler = function() { 
+      if (isProgrammaticScroll) { return; } startSimulation(window.scrollY); window.removeEventListener('scroll', currentStartSimulationScrollHandler); currentStartSimulationScrollHandler = null; 
+    };
+    window.addEventListener('scroll', currentStartSimulationScrollHandler);
     
-    window.addEventListener('resize', () => {
-      const clientWidth = document.documentElement.clientWidth;
-      render.canvas.width = clientWidth;
-      render.canvas.height = window.innerHeight;
-      Render.setPixelRatio(render, window.devicePixelRatio);
-      render.options.width = clientWidth;
-      render.options.height = window.innerHeight;
-      createWalls();
-    });
+    if (currentResizeHandler) { window.removeEventListener('resize', currentResizeHandler); }
+    currentResizeHandler = debounce(() => { 
+        console.log("Window resize detected, re-initializing scene..."); 
+        initScene(); 
+    }, 250); 
+    window.addEventListener('resize', currentResizeHandler);
 
-  } catch (error) {
-    console.error('Error initializing scene:', error);
-    // Ensure flag is reset in case of error
-    isProgrammaticScroll = false;
-  }
+  } catch (error) { console.error('Error initializing scene:', error); isProgrammaticScroll = false; }
 }
 
 document.addEventListener('DOMContentLoaded', initScene);
