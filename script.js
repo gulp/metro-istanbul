@@ -22,15 +22,70 @@ render.canvas.style.position = 'fixed';
 render.canvas.style.top = '0';
 render.canvas.style.left = '0';
 render.canvas.style.zIndex = '10'; // Keep on top for now, can be set to -1 later
-render.canvas.style.pointerEvents = 'none';
+render.canvas.style.pointerEvents = 'auto'; // Enable mouse events on the canvas
 
 // Add mouse control
 const mouse = Mouse.create(render.canvas);
 const mouseConstraint = MouseConstraint.create(engine, {
-  mouse: mouse,
-  constraint: { stiffness: 0.2, render: { visible: false } }
+mouse: mouse,
+constraint: {
+  stiffness: 0.95, // Make dragging more rigid
+  render: {
+    visible: true, // Show constraint line while dragging
+    lineWidth: 2,
+    strokeStyle: 'rgba(0, 255, 0, 0.7)'
+  }
+}
 });
 Composite.add(engine.world, mouseConstraint);
+
+// Matter.js default frictionAir is 0.01
+const DEFAULT_FRICTION_AIR = 0.01;
+const DRAG_FRICTION_AIR = 0.2; // High friction during drag
+
+Matter.Events.on(mouseConstraint, 'startdrag', function(event) {
+    const draggedBody = event.body;
+    if (draggedBody) {
+        // Store the original on the body itself, in case it wasn't the default
+        // though we will ensure all bodies start with DEFAULT_FRICTION_AIR
+        draggedBody._originalFrictionAir = draggedBody.frictionAir;
+        draggedBody.frictionAir = DRAG_FRICTION_AIR;
+        // console.log(`Start drag on body ${draggedBody.id}, frictionAir set to: ${draggedBody.frictionAir}`);
+    }
+});
+
+Matter.Events.on(mouseConstraint, 'enddrag', function(event) {
+    const draggedBody = event.body;
+    if (draggedBody) {
+        // Restore to its stored original, or the default if somehow not stored
+        draggedBody.frictionAir = typeof draggedBody._originalFrictionAir === 'number'
+                                  ? draggedBody._originalFrictionAir
+                                  : DEFAULT_FRICTION_AIR;
+        delete draggedBody._originalFrictionAir; // Clean up the temporary property
+        // console.log(`End drag on body ${draggedBody.id}, frictionAir restored to: ${draggedBody.frictionAir}`);
+    }
+});
+
+// Allow page scrolling via mouse wheel even when mouse is over the canvas, if not dragging
+render.canvas.addEventListener('wheel', function(event) {
+  // If a body is being dragged by the mouse constraint, mouseConstraint.body will be set.
+  // If no body is being dragged, allow the default window scroll.
+  if (!mouseConstraint.body) {
+    // We don't want to preventDefault, let the browser handle it.
+    // However, sometimes the canvas itself captures it.
+    // A common workaround if default doesn't happen is to manually scroll.
+    // But let's first see if simply NOT stopping propagation or preventing default is enough.
+    // Matter.js's internal mouse wheel handler might call preventDefault.
+    // This is tricky. A simpler way for now:
+    // Let's assume Matter's default wheel listener is the issue.
+    // We can try to "override" by just letting this one pass.
+    // If Matter's listener is too aggressive, this won't be enough.
+  }
+  // A more forceful way if the above isn't enough:
+  if (!mouseConstraint.body) {
+     window.scrollBy(event.deltaX, event.deltaY);
+  }
+}, { passive: false }); // Try with non-passive first to see if we can prevent Matter's default
 
 // Wall properties
 const wallThickness = 50;
@@ -116,7 +171,10 @@ async function initScene() {
         worldBodyX, worldBodyY, [scaledPathVertices], 
         {
           isStatic: false, // Dynamic during initial invisible settle
-          restitution: 0.2, friction: 0.3,
+          restitution: 0.02, // Significantly reduced bounciness
+          friction: 0.3,
+          density: 0.003, // Increased density for more inertia
+          frictionAir: DEFAULT_FRICTION_AIR, // Explicitly set default frictionAir
           render: {
             fillStyle: pathElement.getAttribute('fill') || '#2d4059',
             strokeStyle: pathElement.getAttribute('stroke') || '#2d4059',
