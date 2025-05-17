@@ -9,7 +9,7 @@ const render = Render.create({
   element: document.body,
   engine: engine,
   options: {
-    width: window.innerWidth, 
+    width: document.documentElement.clientWidth,
     height: window.innerHeight,
     wireframes: false,
     background: '#f0f0f0',
@@ -40,12 +40,12 @@ function createWalls() {
   Composite.remove(engine.world, walls);
   walls = [];
   const wallOptions = { isStatic: true, render: { fillStyle: '#666' } };
-  const currentWidth = window.innerWidth; 
+  const clientWidth = document.documentElement.clientWidth;
 
-  walls.push(Bodies.rectangle(currentWidth / 2, window.innerHeight + wallThickness / 2, currentWidth, wallThickness, wallOptions)); // Ground
-  walls.push(Bodies.rectangle(currentWidth / 2, -wallThickness / 2 - 100, currentWidth, wallThickness, wallOptions)); // Ceiling
+  walls.push(Bodies.rectangle(clientWidth / 2, window.innerHeight + wallThickness / 2, clientWidth, wallThickness, wallOptions)); // Ground
+  walls.push(Bodies.rectangle(clientWidth / 2, -wallThickness / 2 - 100, clientWidth, wallThickness, wallOptions)); // Ceiling
   walls.push(Bodies.rectangle(-wallThickness / 2, window.innerHeight / 2, wallThickness, window.innerHeight, wallOptions)); // Left
-  walls.push(Bodies.rectangle(currentWidth + wallThickness / 2, window.innerHeight / 2, wallThickness, window.innerHeight, wallOptions)); // Right
+  walls.push(Bodies.rectangle(clientWidth + wallThickness / 2, window.innerHeight / 2, wallThickness, window.innerHeight, wallOptions)); // Right
   Composite.add(engine.world, walls);
 }
 
@@ -70,7 +70,7 @@ async function initScene() {
     const paddingPercent = 0.2; // Aim to use 80% of window dimension (20% total padding)
     
     let scale;
-    const availableWidth = window.innerWidth * (1 - paddingPercent);
+    const availableWidth = document.documentElement.clientWidth * (1 - paddingPercent);
     const availableHeight = window.innerHeight * (1 - paddingPercent);
 
     if (svgViewBoxWidth > 0 && svgViewBoxHeight > 0) {
@@ -85,9 +85,10 @@ async function initScene() {
     const scaledViewBoxWidth = svgViewBoxWidth * scale;
     const scaledViewBoxHeight = svgViewBoxHeight * scale;
 
-    // Center the scaled viewBox
-    const worldOffsetX = (window.innerWidth - scaledViewBoxWidth) / 2 - (svgViewBoxX * scale);
-    const worldOffsetY = (window.innerHeight - scaledViewBoxHeight) / 2 - (svgViewBoxY * scale);
+    const desiredPixelPadding = 0; // For flush bottom-right margin
+    // Align bottom-right of the scaled viewBox with padding
+    const worldOffsetX = document.documentElement.clientWidth - scaledViewBoxWidth - desiredPixelPadding - (svgViewBoxX * scale);
+    const worldOffsetY = window.innerHeight - scaledViewBoxHeight - desiredPixelPadding - (svgViewBoxY * scale);
 
     // Event listener to draw the viewBox's bounding box
     Matter.Events.on(render, 'afterRender', (event) => {
@@ -102,6 +103,7 @@ async function initScene() {
     });
 
     const paths = svgDoc.querySelectorAll('path');
+    const svgBodies = []; // To store references to SVG bodies
     
     paths.forEach((pathElement) => {
       const rawPathVertices = Svg.pathToVertices(pathElement, 10); 
@@ -123,8 +125,8 @@ async function initScene() {
         worldBodyY, 
         [scaledPathVertices], 
         {
-          isStatic: false, // Dynamic from start
-          restitution: 0.2, 
+          isStatic: false, // Dynamic during initial invisible settle
+          restitution: 0.2,
           friction: 0.3,
           render: {
             fillStyle: pathElement.getAttribute('fill') || '#2d4059',
@@ -143,20 +145,90 @@ async function initScene() {
           }
         }
         Composite.add(engine.world, body);
+        svgBodies.push(body); // Store reference
       }
     });
 
-    // Start simulation immediately
-    Render.run(render); 
-    Runner.run(engine);
-    console.log("Matter.js simulation started (centered, dynamic from start).");
+    // Allow engine to settle dynamic bodies before making them static for initial view
+    const settleSteps = 15; // Increased for more robust settling
+    const settleDelta = (1000 / 60) / settleSteps;
+    for (let i = 0; i < settleSteps; i++) {
+      Engine.update(engine, settleDelta);
+    }
+    console.log("Initial dynamic settle complete.");
 
+    // Now make them static for the initial view
+    svgBodies.forEach(body => {
+      Matter.Body.setStatic(body, true);
+    });
+
+    Render.world(render); // Render the settled, now static, state
+    console.log("Scene initialized with pre-settled static objects. Simulation paused.");
+
+    let simulationStarted = false;
+    const initialPageScrollY = window.scrollY;
+
+    function startMainScrollListener() {
+      const initialGravityY = engine.world.gravity.y;
+      let scrollTimeout = null;
+      let lastScrollY = window.scrollY;
+      const scrollStopDelay = 150;
+
+      window.addEventListener('scroll', function gravityScrollHandler() {
+        const currentScrollY = window.scrollY;
+        clearTimeout(scrollTimeout);
+        if (currentScrollY > lastScrollY) {
+          engine.world.gravity.y = -0.8;
+        } else if (currentScrollY < lastScrollY) {
+          engine.world.gravity.y = 4.0;
+        }
+        lastScrollY = currentScrollY;
+        scrollTimeout = setTimeout(() => {
+          engine.world.gravity.y = initialGravityY;
+        }, scrollStopDelay);
+      });
+      console.log("Main scroll listener with gravity changes attached.");
+    }
+
+    function startSimulation(firstScrollEventY) {
+      if (!simulationStarted) {
+        simulationStarted = true;
+        svgBodies.forEach(body => { Matter.Body.setStatic(body, false); });
+
+        // Settle steps already performed during init, no need here.
+        // const settleSteps = 5;
+        // const settleDelta = (1000 / 60) / settleSteps;
+        // for (let i = 0; i < settleSteps; i++) { Engine.update(engine, settleDelta); }
+        
+        // Conditional bump logic remains commented out for now
+        // if (initialPageScrollY > 0 && firstScrollEventY < initialPageScrollY) {
+        //   console.log("Applying bump: page loaded scrolled, and first scroll was up.");
+        //   svgBodies.forEach(body => {
+        //     if (!body.isStatic) {
+        //       Matter.Body.applyForce(body, body.position, { x: 0, y: -0.01 * body.mass });
+        //     }
+        //   });
+        // }
+        
+        Render.run(render);
+        Runner.run(engine);
+        startMainScrollListener();
+        console.log("Matter.js simulation started on first scroll.");
+      }
+    }
+
+    function startSimulationOnScroll() {
+      startSimulation(window.scrollY);
+      window.removeEventListener('scroll', startSimulationOnScroll);
+    }
+    window.addEventListener('scroll', startSimulationOnScroll);
+    
     window.addEventListener('resize', () => {
-      const currentWidth = window.innerWidth; 
-      render.canvas.width = currentWidth;
+      const clientWidth = document.documentElement.clientWidth;
+      render.canvas.width = clientWidth;
       render.canvas.height = window.innerHeight;
       Render.setPixelRatio(render, window.devicePixelRatio);
-      render.options.width = currentWidth;
+      render.options.width = clientWidth;
       render.options.height = window.innerHeight;
       createWalls();
       // Note: For this placement logic, a full re-init or more complex resize handling 
