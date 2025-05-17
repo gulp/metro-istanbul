@@ -142,19 +142,19 @@ async function initScene() {
     const worldOffsetX = document.documentElement.clientWidth - scaledViewBoxWidth - desiredPixelPadding - (svgViewBoxX * scale);
     const worldOffsetY = window.innerHeight - scaledViewBoxHeight - desiredPixelPadding - (svgViewBoxY * scale);
 
-    Matter.Events.on(render, 'afterRender', (event) => {
-      const context = render.context;
-      context.beginPath();
-      const debugRectX = worldOffsetX + (svgViewBoxX * scale); 
-      const debugRectY = worldOffsetY + (svgViewBoxY * scale); 
-      context.rect(debugRectX, debugRectY, scaledViewBoxWidth, scaledViewBoxHeight);
-      context.strokeStyle = 'rgba(0, 255, 0, 0.5)'; 
-      context.lineWidth = 2;
-      context.stroke();
-    });
+    // Matter.Events.on(render, 'afterRender', (event) => {
+    //   const context = render.context;
+    //   context.beginPath();
+    //   const debugRectX = worldOffsetX + (svgViewBoxX * scale);
+    //   const debugRectY = worldOffsetY + (svgViewBoxY * scale);
+    //   context.rect(debugRectX, debugRectY, scaledViewBoxWidth, scaledViewBoxHeight);
+    //   context.strokeStyle = 'rgba(0, 255, 0, 0.5)';
+    //   context.lineWidth = 2;
+    //   context.stroke();
+    // });
 
     const paths = svgDoc.querySelectorAll('path');
-    const svgBodies = []; 
+    const svgBodies = [];
     
     paths.forEach((pathElement) => {
       const rawPathVertices = Svg.pathToVertices(pathElement, 10); 
