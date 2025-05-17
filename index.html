@@ -9,7 +9,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Hammersmith+One&display=swap" rel="stylesheet">
     <style>
         html {
-            scroll-behavior: smooth; 
+            /* scroll-behavior: smooth; */ /* Temporarily disabled for testing */
         }
         html, body {
             margin: 0;
@@ -48,7 +48,8 @@
             justify-content: center; 
             text-align: center; 
             position: relative; 
-            z-index: 11;      
+            z-index: 11;
+            pointer-events: none;
         }
         .static-footer-text h2 { 
             font-size: 24px;
@@ -56,17 +57,19 @@
             margin-bottom: 20px; 
         }
         .back-to-top-link {
+            pointer-events: painted;
             display: inline-block; 
             padding: 10px 20px;
             background-color: #fff; 
             color: #f0f0f0; 
             text-decoration: none;
             border-radius: 4px;
-            font-size: 16px;
+            font-size: 12px;
             transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease; 
         }
         .back-to-top-link:hover {
             background-color: #E10916;
+            color: #fff;
         }
     </style>
 </head>
@@ -83,7 +86,7 @@
 
     <div class="static-footer-text">
         <h2>COMING SOON</h2>
-        <a href="#page-top" class="back-to-top-link">Back to Top</a>
+        <a href="#page-top" class="back-to-top-link">BACK</a>
     </div>
 
     <!-- Scripts -->
