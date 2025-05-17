@@ -1,6 +1,8 @@
 // Matter.js setup
 const { Engine, Render, Runner, Bodies, Composite, Svg, Vertices, Mouse, MouseConstraint } = Matter;
-Matter.Common.setDecomp(decomp); 
+Matter.Common.setDecomp(decomp);
+
+let isProgrammaticScroll = false; // Flag to identify script-initiated scrolls
 
 // Initialize engine and renderer
 const engine = Engine.create();
@@ -106,6 +108,14 @@ function createWalls() {
 
 async function initScene() {
   try {
+    // Simplest form: Scroll to top, allow it to be smooth if CSS dictates.
+    // The isProgrammaticScroll flag will prevent this from starting the simulation.
+    isProgrammaticScroll = true;
+    window.scrollTo(0, 0);
+    setTimeout(() => {
+        isProgrammaticScroll = false;
+    }, 0); // Reset flag after event loop turn
+
     createWalls();
 
     const response = await fetch('images/istanbul-metro-logo.svg');
@@ -234,12 +244,15 @@ async function initScene() {
       let lastScrollY = window.scrollY;
       const scrollStopDelay = 150;
       let currentScrollEffect = null; // null, 'floating', 'fallingHard'
-      // let floatInitialScrollY = 0; // No longer needed
+      // const comingSoonFooter = document.getElementById('coming-soon-footer'); // REMOVED
+      // let footerShown = false; // REMOVED
 
       window.addEventListener('scroll', function gravityScrollHandler() {
         const currentScrollY = window.scrollY;
         const scrollDelta = currentScrollY - lastScrollY;
         clearTimeout(scrollTimeout);
+
+        // "COMING SOON" footer JavaScript logic REMOVED
 
         if (scrollDelta > 0) { // Scrolling Down
           if (currentScrollEffect !== 'floating') {
@@ -315,6 +328,12 @@ async function initScene() {
     }
 
     function startSimulationOnScroll() {
+      if (isProgrammaticScroll) {
+        // console.log("Programmatic scroll detected, ignoring for simulation start.");
+        // isProgrammaticScroll = false; // Reset here if not using timeout in initScene, but timeout is safer.
+        return;
+      }
+      // console.log("User scroll detected, starting simulation.");
       startSimulation(window.scrollY);
       window.removeEventListener('scroll', startSimulationOnScroll);
     }
@@ -332,6 +351,8 @@ async function initScene() {
 
   } catch (error) {
     console.error('Error initializing scene:', error);
+    // Ensure flag is reset in case of error
+    isProgrammaticScroll = false;
   }
 }
 

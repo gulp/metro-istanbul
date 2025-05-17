@@ -9,7 +9,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Hammersmith+One&display=swap" rel="stylesheet">
     <style>
         html {
-            scroll-behavior: smooth; /* Enable smooth scrolling for the whole page */
+            scroll-behavior: smooth; 
         }
         html, body {
             margin: 0;
@@ -33,6 +33,7 @@
             font-size: 54px;
             margin: 0; 
             color: #012269; 
+            margin-top: -200px;
         }
         .scroll-spacer {
             height: 200vh; 
@@ -42,30 +43,34 @@
         .static-footer-text {
             height: calc(100vh * 2 / 3); 
             display: flex;
-            flex-direction: column; /* Stack "COMING SOON" and "Back to Top" vertically */
+            flex-direction: column; 
             align-items: center; 
             justify-content: center; 
             text-align: center; 
-            font-size: 24px;   
-            color: #fff;       
+            position: relative; 
+            z-index: 11;      
+        }
+        .static-footer-text h2 { 
+            font-size: 24px;
+            color: #012269; 
+            margin-bottom: 20px; 
         }
         .back-to-top-link {
-            display: inline-block; /* Or block if you want it on its own line fully */
-            margin-top: 20px; /* Space above the link */
+            display: inline-block; 
             padding: 10px 20px;
-            color: #ccc; /* Muted link color */
+            background-color: #fff; 
+            color: #f0f0f0; 
             text-decoration: none;
-            border: 1px solid #ccc;
             border-radius: 4px;
             font-size: 16px;
+            transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease; 
         }
         .back-to-top-link:hover {
-            color: #fff;
-            border-color: #fff;
+            background-color: #E10916;
         }
     </style>
 </head>
-<body id="page-top">
+<body id="page-top"> 
     <!-- Matter.js canvas will be appended to body by script.js -->
 
     <div class="header-container">
@@ -77,7 +82,7 @@
     </div>
 
     <div class="static-footer-text">
-        <h2>COMING SOON</h2> 
+        <h2>COMING SOON</h2>
         <a href="#page-top" class="back-to-top-link">Back to Top</a>
     </div>
 
