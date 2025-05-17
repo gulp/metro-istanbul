@@ -12,7 +12,7 @@ const render = Render.create({
     width: document.documentElement.clientWidth,
     height: window.innerHeight,
     wireframes: false,
-    background: '#f0f0f0',
+    background: 'transparent', 
     showAngleIndicator: false
   }
 });
@@ -21,7 +21,7 @@ const render = Render.create({
 render.canvas.style.position = 'fixed';
 render.canvas.style.top = '0';
 render.canvas.style.left = '0';
-render.canvas.style.zIndex = '-1';
+render.canvas.style.zIndex = '10'; // Keep on top for now, can be set to -1 later
 render.canvas.style.pointerEvents = 'none';
 
 // Add mouse control
@@ -42,10 +42,10 @@ function createWalls() {
   const wallOptions = { isStatic: true, render: { fillStyle: '#666' } };
   const clientWidth = document.documentElement.clientWidth;
 
-  walls.push(Bodies.rectangle(clientWidth / 2, window.innerHeight + wallThickness / 2, clientWidth, wallThickness, wallOptions)); // Ground
-  walls.push(Bodies.rectangle(clientWidth / 2, -wallThickness / 2 - 100, clientWidth, wallThickness, wallOptions)); // Ceiling
-  walls.push(Bodies.rectangle(-wallThickness / 2, window.innerHeight / 2, wallThickness, window.innerHeight, wallOptions)); // Left
-  walls.push(Bodies.rectangle(clientWidth + wallThickness / 2, window.innerHeight / 2, wallThickness, window.innerHeight, wallOptions)); // Right
+  walls.push(Bodies.rectangle(clientWidth / 2, window.innerHeight + wallThickness / 2, clientWidth, wallThickness, wallOptions));
+  walls.push(Bodies.rectangle(clientWidth / 2, -wallThickness / 2 - 100, clientWidth, wallThickness, wallOptions));
+  walls.push(Bodies.rectangle(-wallThickness / 2, window.innerHeight / 2, wallThickness, window.innerHeight, wallOptions));
+  walls.push(Bodies.rectangle(clientWidth + wallThickness / 2, window.innerHeight / 2, wallThickness, window.innerHeight, wallOptions));
   Composite.add(engine.world, walls);
 }
 
@@ -66,9 +66,7 @@ async function initScene() {
     const svgViewBoxWidth = viewBox[2];
     const svgViewBoxHeight = viewBox[3];
     
-    // --- SCALING AND CENTERING THE VIEWBOX ---
-    const paddingPercent = 0.2; // Aim to use 80% of window dimension (20% total padding)
-    
+    const paddingPercent = 0.2; 
     let scale;
     const availableWidth = document.documentElement.clientWidth * (1 - paddingPercent);
     const availableHeight = window.innerHeight * (1 - paddingPercent);
@@ -80,17 +78,15 @@ async function initScene() {
     } else {
         scale = 1; 
     }
-    scale *= 0.5; // User's additional scaling factor
+    scale *= 0.5; 
 
     const scaledViewBoxWidth = svgViewBoxWidth * scale;
     const scaledViewBoxHeight = svgViewBoxHeight * scale;
 
-    const desiredPixelPadding = 0; // For flush bottom-right margin
-    // Align bottom-right of the scaled viewBox with padding
+    const desiredPixelPadding = 0; 
     const worldOffsetX = document.documentElement.clientWidth - scaledViewBoxWidth - desiredPixelPadding - (svgViewBoxX * scale);
     const worldOffsetY = window.innerHeight - scaledViewBoxHeight - desiredPixelPadding - (svgViewBoxY * scale);
 
-    // Event listener to draw the viewBox's bounding box
     Matter.Events.on(render, 'afterRender', (event) => {
       const context = render.context;
       context.beginPath();
@@ -103,31 +99,24 @@ async function initScene() {
     });
 
     const paths = svgDoc.querySelectorAll('path');
-    const svgBodies = []; // To store references to SVG bodies
+    const svgBodies = []; 
     
     paths.forEach((pathElement) => {
       const rawPathVertices = Svg.pathToVertices(pathElement, 10); 
-      if (!rawPathVertices || rawPathVertices.length === 0) {
-        console.warn('Could not get vertices for path:', pathElement.id);
-        return;
-      }
+      if (!rawPathVertices || rawPathVertices.length === 0) return;
 
       const svgPathCentroid = Vertices.centre(rawPathVertices);
       const translatedPathVertices = Vertices.translate(rawPathVertices, { x: -svgPathCentroid.x, y: -svgPathCentroid.y }, 1);
       const scaledPathVertices = Vertices.scale(translatedPathVertices, scale, scale);
 
-      // Position body relative to its centroid within the scaled and offset viewBox
       const worldBodyX = (svgPathCentroid.x * scale) + worldOffsetX;
       const worldBodyY = (svgPathCentroid.y * scale) + worldOffsetY;
       
       const body = Bodies.fromVertices(
-        worldBodyX, 
-        worldBodyY, 
-        [scaledPathVertices], 
+        worldBodyX, worldBodyY, [scaledPathVertices], 
         {
           isStatic: false, // Dynamic during initial invisible settle
-          restitution: 0.2,
-          friction: 0.3,
+          restitution: 0.2, friction: 0.3,
           render: {
             fillStyle: pathElement.getAttribute('fill') || '#2d4059',
             strokeStyle: pathElement.getAttribute('stroke') || '#2d4059',
@@ -137,36 +126,49 @@ async function initScene() {
         },
         true
       );
-
       if (body) {
+        // Placeholder for tagging light object, e.g. if (pathElement.id === 'your-arc-id') body.isLight = true;
         if (body.parts && body.parts.length > 1) {
           for (let i = 1; i < body.parts.length; i++) {
             body.parts[i].render.strokeStyle = body.render.fillStyle;
           }
         }
         Composite.add(engine.world, body);
-        svgBodies.push(body); // Store reference
+        svgBodies.push(body); 
       }
     });
 
-    // Allow engine to settle dynamic bodies before making them static for initial view
-    const settleSteps = 15; // Increased for more robust settling
+    const settleSteps = 15; 
     const settleDelta = (1000 / 60) / settleSteps;
     for (let i = 0; i < settleSteps; i++) {
       Engine.update(engine, settleDelta);
     }
     console.log("Initial dynamic settle complete.");
 
-    // Now make them static for the initial view
     svgBodies.forEach(body => {
       Matter.Body.setStatic(body, true);
     });
 
-    Render.world(render); // Render the settled, now static, state
+    Render.world(render); 
     console.log("Scene initialized with pre-settled static objects. Simulation paused.");
 
     let simulationStarted = false;
     const initialPageScrollY = window.scrollY;
+
+    // function applyExplosiveForce(bodiesToExplode) { // DISABLED
+    //   const forceMagnitudeY = -0.02;
+    //   const forceMagnitudeX = 0.01;
+    //   bodiesToExplode.forEach(body => {
+    //     if (!body.isStatic) {
+    //       const randomX = (Math.random() - 0.5) * 2 * forceMagnitudeX;
+    //       const randomY = Math.random() * forceMagnitudeY;
+    //       Matter.Body.applyForce(body, body.position, {
+    //         x: randomX * body.mass,
+    //         y: randomY * body.mass
+    //       });
+    //     }
+    //   });
+    // }
 
     function startMainScrollListener() {
       const initialGravityY = engine.world.gravity.y;
@@ -177,38 +179,37 @@ async function initScene() {
       window.addEventListener('scroll', function gravityScrollHandler() {
         const currentScrollY = window.scrollY;
         clearTimeout(scrollTimeout);
-        if (currentScrollY > lastScrollY) {
-          engine.world.gravity.y = -0.8;
-        } else if (currentScrollY < lastScrollY) {
-          engine.world.gravity.y = 4.0;
+        if (currentScrollY > lastScrollY) { // Scrolling Down
+          engine.world.gravity.y = -0.5; // Objects float
+        } else if (currentScrollY < lastScrollY) { // Scrolling Up
+          engine.world.gravity.y = 3.5;  // Objects fall harder
         }
         lastScrollY = currentScrollY;
         scrollTimeout = setTimeout(() => {
-          engine.world.gravity.y = initialGravityY;
+          engine.world.gravity.y = initialGravityY; 
         }, scrollStopDelay);
       });
-      console.log("Main scroll listener with gravity changes attached.");
+      console.log("Scroll listener with direct gravity changes attached.");
     }
 
     function startSimulation(firstScrollEventY) {
       if (!simulationStarted) {
         simulationStarted = true;
         svgBodies.forEach(body => { Matter.Body.setStatic(body, false); });
-
-        // Settle steps already performed during init, no need here.
-        // const settleSteps = 5;
-        // const settleDelta = (1000 / 60) / settleSteps;
-        // for (let i = 0; i < settleSteps; i++) { Engine.update(engine, settleDelta); }
         
-        // Conditional bump logic remains commented out for now
-        // if (initialPageScrollY > 0 && firstScrollEventY < initialPageScrollY) {
-        //   console.log("Applying bump: page loaded scrolled, and first scroll was up.");
-        //   svgBodies.forEach(body => {
-        //     if (!body.isStatic) {
-        //       Matter.Body.applyForce(body, body.position, { x: 0, y: -0.01 * body.mass });
-        //     }
-        //   });
-        // }
+        if (initialPageScrollY > 0 && firstScrollEventY < initialPageScrollY) {
+          console.log("Applying bump: page loaded scrolled, and first scroll was up.");
+          // const originalGravity = engine.world.gravity.y; // Not needed if not changing gravity for bump
+          // engine.world.gravity.y = 0; // Do NOT neutralize gravity for this bump
+
+          // Apply a very gentle, non-randomized upward nudge against normal gravity
+          svgBodies.forEach(body => {
+            if (!body.isStatic) {
+              Matter.Body.applyForce(body, body.position, { x: 0, y: -0.001 * body.mass });
+            }
+          });
+          // engine.world.gravity.y = originalGravity; // Gravity was not changed
+        }
         
         Render.run(render);
         Runner.run(engine);
@@ -231,8 +232,6 @@ async function initScene() {
       render.options.width = clientWidth;
       render.options.height = window.innerHeight;
       createWalls();
-      // Note: For this placement logic, a full re-init or more complex resize handling 
-      // for SVG objects would be needed if you want them to rescale/reposition on window resize.
     });
 
   } catch (error) {
